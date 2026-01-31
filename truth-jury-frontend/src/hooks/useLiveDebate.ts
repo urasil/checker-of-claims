@@ -2,7 +2,7 @@
  * Custom hook for managing a live debate using the backend API
  */
 import { useState, useCallback, useRef } from 'react';
-import { streamDebate, DebateEvent, JudgeVerdictFromAPI } from '@/lib/api';
+import { streamDebate, DebateEvent, JudgeVerdictFromAPI, fetchTtsAudio } from '@/lib/api';
 import { Message, PersonaType, JudgeVerdict, Reaction } from '@/types/debate';
 
 export type DebatePhase = 'idle' | 'intro' | 'round1' | 'moderator-summary' | 'round2' | 'verdict' | 'complete' | 'error';
@@ -46,6 +46,9 @@ export function useLiveDebate(options: UseLiveDebateOptions = {}): UseLiveDebate
     const abortControllerRef = useRef<AbortController | null>(null);
     const eventQueueRef = useRef<DebateEvent[]>([]);
     const isProcessingRef = useRef(false);
+    const currentAudioRef = useRef<HTMLAudioElement | null>(null);
+    const audioUrlRef = useRef<string | null>(null);
+    const stopRequestedRef = useRef(false);
 
     const convertApiVerdictToFrontend = (apiVerdict: JudgeVerdictFromAPI): JudgeVerdict => {
         return {
@@ -62,7 +65,54 @@ export function useLiveDebate(options: UseLiveDebateOptions = {}): UseLiveDebate
         };
     };
 
+    const stopAudio = useCallback(() => {
+        stopRequestedRef.current = true;
+        if (currentAudioRef.current) {
+            currentAudioRef.current.pause();
+            currentAudioRef.current = null;
+        }
+        if (audioUrlRef.current) {
+            URL.revokeObjectURL(audioUrlRef.current);
+            audioUrlRef.current = null;
+        }
+    }, []);
+
+    const playTts = useCallback(async (personaId: PersonaType, text: string) => {
+        const trimmed = text.trim();
+        if (!trimmed || stopRequestedRef.current) return;
+
+        try {
+            const blob = await fetchTtsAudio({ persona_id: personaId, text: trimmed });
+            if (stopRequestedRef.current || blob.size === 0) return;
+
+            const url = URL.createObjectURL(blob);
+            audioUrlRef.current = url;
+            const audio = new Audio(url);
+            currentAudioRef.current = audio;
+
+            await new Promise<void>((resolve) => {
+                const cleanup = () => {
+                    if (currentAudioRef.current === audio) {
+                        currentAudioRef.current = null;
+                    }
+                    if (audioUrlRef.current === url) {
+                        URL.revokeObjectURL(url);
+                        audioUrlRef.current = null;
+                    }
+                    resolve();
+                };
+
+                audio.addEventListener('ended', cleanup, { once: true });
+                audio.addEventListener('error', cleanup, { once: true });
+                audio.play().catch(cleanup);
+            });
+        } catch (err) {
+            console.warn('TTS failed:', err);
+        }
+    }, []);
+
     const processEvent = useCallback(async (event: DebateEvent) => {
+        if (stopRequestedRef.current) return;
         // Update phase based on event
         if (event.event_type === 'intro') {
             setPhase('intro');
@@ -107,6 +157,8 @@ export function useLiveDebate(options: UseLiveDebateOptions = {}): UseLiveDebate
             });
 
             options.onMessage?.(message);
+
+            await playTts(personaId, event.content);
 
             // Small delay between messages
             await new Promise(resolve => setTimeout(resolve, MESSAGE_DISPLAY_DELAY_MS));
@@ -154,6 +206,10 @@ export function useLiveDebate(options: UseLiveDebateOptions = {}): UseLiveDebate
         isProcessingRef.current = true;
 
         while (eventQueueRef.current.length > 0) {
+            if (stopRequestedRef.current) {
+                eventQueueRef.current = [];
+                break;
+            }
             const event = eventQueueRef.current.shift();
             if (event) {
                 await processEvent(event);
@@ -164,6 +220,7 @@ export function useLiveDebate(options: UseLiveDebateOptions = {}): UseLiveDebate
     }, [processEvent]);
 
     const startDebate = useCallback((claim: string, truth: string, model?: string) => {
+        stopAudio();
         // Reset state
         setMessages([]);
         setPhase('intro');
@@ -174,6 +231,7 @@ export function useLiveDebate(options: UseLiveDebateOptions = {}): UseLiveDebate
         setIsDebating(true);
         setProgress(0);
         eventQueueRef.current = [];
+        stopRequestedRef.current = false;
 
         options.onStart?.();
 
@@ -194,12 +252,13 @@ export function useLiveDebate(options: UseLiveDebateOptions = {}): UseLiveDebate
                 // Streaming complete
             }
         );
-    }, [options, processEventQueue]);
+    }, [options, processEventQueue, stopAudio]);
 
     const stopDebate = useCallback(() => {
         abortControllerRef.current?.abort();
         setIsDebating(false);
-    }, []);
+        stopAudio();
+    }, [stopAudio]);
 
     const reset = useCallback(() => {
         stopDebate();

@@ -56,6 +56,11 @@ export interface APIPersona {
     isJury: boolean;
 }
 
+export interface TTSRequest {
+    persona_id: string;
+    text: string;
+}
+
 /**
  * Stream a debate in real-time via Server-Sent Events
  * 
@@ -179,4 +184,24 @@ export async function healthCheck(): Promise<boolean> {
     } catch {
         return false;
     }
+}
+
+/**
+ * Fetch TTS audio for a persona and text.
+ */
+export async function fetchTtsAudio(request: TTSRequest): Promise<Blob> {
+    const response = await fetch(`${API_BASE_URL}/tts`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(request),
+    });
+
+    if (!response.ok) {
+        const detail = await response.text();
+        throw new Error(detail || `TTS error! status: ${response.status}`);
+    }
+
+    return response.blob();
 }

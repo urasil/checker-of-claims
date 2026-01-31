@@ -18,8 +18,9 @@ from datetime import datetime, timezone
 from typing import Any
 
 
-from dotenv import load_dotenv
+from dotenv import find_dotenv, load_dotenv
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -33,10 +34,11 @@ from checker_of_facts.hackathon_models import (
     ModeratorSummary,
     JurorReaction,
 )
+from checker_of_facts.tts import synthesize_speech
 
 
-# Load environment variables
-load_dotenv()
+# Load environment variables (search upward for .env)
+load_dotenv(find_dotenv(usecwd=True) or None)
 
 # In-memory storage for active debates
 active_debates: dict[str, dict[str, Any]] = {}
@@ -102,6 +104,12 @@ class MessageEvent(BaseModel):
     timestamp: str
 
 
+class TTSRequest(BaseModel):
+    """Request for text-to-speech synthesis."""
+    persona_id: str
+    text: str
+
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Helper Functions
@@ -120,6 +128,19 @@ def persona_id_to_frontend_id(backend_id: str) -> str:
         "final_judge": "moderator",  # Final judge speaks through moderator
     }
     return mapping.get(backend_id, backend_id)
+
+
+def frontend_id_to_backend_id(frontend_id: str) -> str:
+    """Map frontend persona IDs to backend persona IDs."""
+    mapping = {
+        "skeptic": "skeptic",
+        "academic": "pedant",
+        "pragmatist": "pragmatist",
+        "journalist": "devil_advocate",
+        "ethicist": "context_expert",
+        "moderator": "moderator",
+    }
+    return mapping.get(frontend_id, frontend_id)
 
 
 def verdict_to_frontend_format(verdict: ModeratorFinalVerdict) -> dict:
@@ -524,6 +545,25 @@ async def get_personas():
     return {"personas": personas}
 
 
+@app.post("/tts")
+async def synthesize_tts(request: TTSRequest):
+    """Generate TTS audio for a persona and text."""
+    try:
+        persona_id = frontend_id_to_backend_id(request.persona_id)
+        audio_bytes = await asyncio.to_thread(
+            synthesize_speech,
+            persona_id,
+            request.text,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    if not audio_bytes:
+        raise HTTPException(status_code=400, detail="Empty text.")
+
+    return Response(content=audio_bytes, media_type="audio/mpeg")
+
+
 def main():
     """Main entry point for the API server."""
     import uvicorn
@@ -534,4 +574,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
