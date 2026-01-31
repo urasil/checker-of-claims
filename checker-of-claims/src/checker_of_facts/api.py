@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import logging
 import uuid
 from contextlib import asynccontextmanager
 from dataclasses import asdict, replace
@@ -39,6 +40,8 @@ from checker_of_facts.tts import synthesize_speech
 
 # Load environment variables (search upward for .env)
 load_dotenv(find_dotenv(usecwd=True) or None)
+
+logger = logging.getLogger("checker_of_facts.api")
 
 # In-memory storage for active debates
 active_debates: dict[str, dict[str, Any]] = {}
@@ -556,6 +559,7 @@ async def synthesize_tts(request: TTSRequest):
             request.text,
         )
     except Exception as exc:
+        logger.exception("TTS failed for persona_id=%s", request.persona_id)
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     if not audio_bytes:

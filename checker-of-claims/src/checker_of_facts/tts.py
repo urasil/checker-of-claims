@@ -9,7 +9,7 @@ from functools import lru_cache
 from typing import Any
 
 ELEVENLABS_API_URL = os.getenv("ELEVENLABS_API_URL", "https://api.elevenlabs.io/v1")
-ELEVENLABS_MODEL_ID = os.getenv("ELEVENLABS_MODEL_ID", "eleven_multilingual_v2")
+ELEVENLABS_MODEL_ID = os.getenv("ELEVENLABS_MODEL_ID")
 ELEVENLABS_MAX_CHARS = int(os.getenv("ELEVENLABS_MAX_CHARS", "1200"))
 
 # Default persona list for voice assignment
@@ -189,10 +189,11 @@ def synthesize_speech(persona_id: str, text: str) -> bytes:
 
     payload = {
         "text": trimmed,
-        "model_id": ELEVENLABS_MODEL_ID,
         "voice_settings": {
             "stability": 0.4,
             "similarity_boost": 0.7,
         },
     }
+    if ELEVENLABS_MODEL_ID:
+        payload["model_id"] = ELEVENLABS_MODEL_ID
     return _request_audio(f"/text-to-speech/{voice_id}", payload)
